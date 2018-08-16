@@ -19,25 +19,44 @@ contract User{
         require(admin == msg.sender); 
         _;
     }
-    modifier roleVerify{
+    modifier roleAdminVerify{
         require(userInfo[visitor].role == 1);
         _;
     }
     
-    function getAdmin() view returns(address){
-        return admin;
+    modifier roleOtherVerify{
+        require(userInfo[visitor].role == 2 || userInfo[visitor].role == 3);
+        _;
     }
     
-    function deleteUser(address _addr) public view roleVerify returns(bool){
+    //update user information
+    function updateUser(string _name) roleOtherVerify returns(bool){
+        userInfo[visitor].name = _name;
+        return true;
+    }
+    //only admin can delete
+    function deleteUser(address _addr) public view roleAdminVerify returns(bool){
         userInfo[_addr] = Information(0,0,"none");
         if(userInfo[_addr].role == 0){
             return true;
         }
         return false;
     }
+    //只有管理員有權限設定每個用戶
     function setUser(address _addr,uint _id,uint _role, string _name)public adminVerify{
         userInfo[_addr] = Information(_id,_role,_name);
     }
+    
+    //可以判斷註冊的人是哪個身分
+    function signup(address _addr,uint _id,uint _represent, string _name)public{
+        if(_represent == 2){
+            userInfo[_addr] = Information(_id,2,_name);
+        }
+        if(_represent == 3){
+            userInfo[_addr] = Information(_id,3,_name);
+        }
+    }
+    //輸入密碼取得address，回傳資料
     function login(address _addr) public view returns(uint,uint,string){
         visitor = _addr;
         var users = userInfo[_addr];
