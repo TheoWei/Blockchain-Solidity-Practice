@@ -1,5 +1,6 @@
 pragma solidity^0.4.24;
 
+
 contract Token{
     address owner;
 
@@ -27,12 +28,7 @@ contract Token{
 
 }
 contract RentHouseContract{
-    /*
-        token \\create, send, 
-        user userID,name,email,location,ID
-        contract host,guest,contract,Indate,Outdate
-        hash confirm, 
-    */
+
     struct Content{
         string host;
         string guest;
