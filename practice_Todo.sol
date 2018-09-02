@@ -3,6 +3,7 @@ pragma solidity^0.4.24;
 /*
 @title To Do List
 @author no one
+@date 2018-08-30
 @notice 
 有會員機制的todolist，user 不同，資料呈現不同；每個user可以根據item進行刪除、更新、新增的動作
 user 註冊好密碼，以address來表示身分
@@ -17,6 +18,7 @@ FOR LIST
 address => string[]輸入資料，以array.length數量呈現所有資料
 3個function來執行動作，新增-push，更新-取得id，刪除-delete
 
+語法使用: inherit Contract、modifier、constructor、require、event、mapping、address[]
 */
 
 contract User{
@@ -44,14 +46,14 @@ contract User{
     }
     
     function renounceOwnership() public onlyOwner{
-        owner = address(0);
+        owner = address(0); //owner = non-exisiting address
     }
     function transferOwnership(address _newOwner)public onlyOwner returns(bool){
         _transferOwnership(_newOwner);
         return true;
     }
     function _transferOwnership(address _newOwner) internal{
-        require(msg.sender != address(0));
+        require(msg.sender != address(0)); //confirm contract is existing or not
         owner = _newOwner;
     }
     
