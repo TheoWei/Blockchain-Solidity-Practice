@@ -13,7 +13,7 @@ chairperson 可以授權address擁有投票權
 2 struct to record voter status and proposal
 
 @reference 
--solidity example https://solidity.readthedocs.io/en/v0.4.25/solidity-by-example.html
+-solidity vote example https://solidity.readthedocs.io/en/v0.4.25/solidity-by-example.html
 */
 contract VOTE{
     
