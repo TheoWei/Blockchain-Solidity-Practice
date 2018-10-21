@@ -76,7 +76,7 @@ contract SimpleAuction{
     function auctionEnd() public {
         //判斷目前時間是否超過拍賣時間
         require(now >= auctionEnded,"Auction not end yet");
-        
+        require(!ended,"Auction not been ended");
         //拍賣結束狀態為true
         ended = true;
         

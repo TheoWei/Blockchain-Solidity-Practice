@@ -101,7 +101,7 @@ contract Purchase{
         inState(State.Locked)
     {
         emit ItemReceived();
-        buyer.transfer(value); //不懂
+        buyer.transfer(value); //拿回保證金的意思
         seller.transfer(address(this).balance);
         state = State.Inactive;
         
