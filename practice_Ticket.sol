@@ -1,4 +1,9 @@
 pragma solidity^0.4.25;
+/*
+參考的code，針對聚會情境設計，只有提到發起主辦address、最多參與者(票的數量)、開始時間，function部分只有買票、主辦提款，買票部分用fallback function 表示EOA直接付款給CONTRACT ADDRESS就能買票
+進階版
+退票、票的驗證、結束時間、限制單人可買數量、
+*/
 contract Ticket{
     address public Host; //發起人-主辦單位
     uint256 public TicketPrice;//票價
