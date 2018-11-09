@@ -34,8 +34,8 @@ contract BlindAuction{
     modifier onlyBefore(uint _time){ require(now < _time); _;}
     modifier onlyAfter(uint _time){ require(now > _time); _;}
     
-    constructor(
-        
+    //參數輸入受益人、投標時間、展示時間
+    constructor(     
         address _beneficiary,
         uint _biddingTime,
         uint _revealTime
@@ -66,7 +66,7 @@ contract BlindAuction{
         );
     }
     
-    //不懂
+    //輸入展示項目的資料，只限定在投標時間後，展示時間前可以呼叫function
     function reveal(
         uint[] _value,
         bool[] _fake,
@@ -74,16 +74,16 @@ contract BlindAuction{
     
     ) 
         public
-        onlyAfter(biddingEndTime) // 限定時間在投標時間後，展示時間前
+        onlyAfter(biddingEndTime) 
         onlyBefore(revealEndTime)
     {
-        // 計算bids mapping msg.sender擁有的Index長度是多少
+        // 計算msg.sender投標多少個項目
         uint length = bids[msg.sender].length;
         
-        //退錢
+        //宣告退錢
         uint refund;
         
-        //判斷argument 的長度數量要和msg.sender長度數量相符合
+        //判斷展示的數量和msg.sender投標的數量相符合
         require(_value.length == length,"value length isn't match");
         require(_fake.length == length,"fake length isn't match");
         require(_secret.length == length,"secret length isn't match");
@@ -91,23 +91,31 @@ contract BlindAuction{
         
         
         for(uint8 i = 0; i < length ; i++){
+            //將msg.sender i個投標的項目都存放在bid_
             Bid storage bid_ = bids[msg.sender][i]; 
+            //內部參數 = i個順序輸入參數
             (uint value, bool fake, bytes32 secret) = (_value[i],_fake[i],_secret[i]);
             
-            //確認bid hash是不是一致
+            //確認第i個投標項目的hash是不是和展示項目的hash一致
             if(bid_.bidHash == keccak256(abi.encodePacked(value,fake,secret))){
               continue;  
             }
+            //增加msg.sender退錢額度
             refund += bid_.deposit;
             
-            //不懂
+            //確認fake為false 或是出價高於本身價值
             if(!fake && bid_.deposit >= value){
-                //出價為true代表為最高出價
+
+                //如果為true代表為最高出價
                 if(placeBid(msg.sender,value)){
+
+                    //減少退錢額度，表示為最高出價
                     refund -= value;
                 }
+                //將賣家投標的項目hash清除，表示已經執行過
                 bid_.bidHash = bytes32(0);
             }
+            //將投標項目沒有達到標準的出價退錢給參與者
             msg.sender.transfer(refund);
         }
              
@@ -146,9 +154,9 @@ contract BlindAuction{
         }
     }
     
-    //拍賣結束受益人拿回價格，只能在展示時間結束後執行
+    //拍賣結束受益人拿回價格，只能在拍賣時間結束、合約狀態還沒終止後執行
     function auctionEnded() public onlyAfter(revealEndTime){
-        //不懂
+        //確認拍賣合約狀態
         require(!ended);
         //teigger event to log winner address and highestBid
         emit AuctionEnd(highestBidder,highestBid);

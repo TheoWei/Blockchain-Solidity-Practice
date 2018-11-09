@@ -91,3 +91,21 @@ contract MyContract is ERC721{
         return tokenLinks[_tokenId];
     }
 }
+
+
+
+//可以選擇加入
+
+//提供給外部來觀看合約代表的NFT
+interface ERC721Metadata{
+    function name() external view returns(string _name);
+    function symbol() external view returns(string _symbol);
+    function tokenURI(uint256 _tokenId) external view returns(string));
+}
+
+//准許合約發表整串的NFT開放給外部
+interface ERC721Enumerable{
+    function totalSupply() external view returns(uint256);
+    function tokenByIndex(uint256 _index) external view returns(uint256);
+    function tokenOfOwnerByIndex(address _owner, uint256 _index) external view returns(uint256);
+}
