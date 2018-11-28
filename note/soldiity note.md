@@ -170,8 +170,8 @@ function(address _user, string _name, uint256 _age) public{
     ```
 
 *  Getter function
-    * 當狀態變數設定為公開時，會自動將變數轉呼為 getter function
-    * 不過`mapping`設定為公開，反而不會轉變成getter function 
+    * 當狀態變數設定為`public`時，會自動將變數轉呼為 getter function
+    * 不過`mapping`設定為`public`，反而不會轉變成getter function 
 ```javascript
 struct List{
     uint256 a;
@@ -206,54 +206,6 @@ function ID(uint256 _id, address _addr) public returns(uint256 a, uint256 b){
 * `revert(string message)`
     * 終止執行，會回復原先狀態，消耗所有的GAS
 
-
-## 特殊情況
-* function 名稱相同，只要參數數量不同，即可區分
-```javascript
-function a(address  _addr) public returns(_addr){
-    return _addr;
-}
-function b(address _addr, string _name) public returns(_addr,_name){
-    return (_addr,_name);
-}
-```
-
-* funtion 呼叫和回傳
-```javascript 
-function A(uint _a, uint _b, uint _c) public returns(uint a, uint b, uint c){ //Method 1 ， 在returns這邊直接宣告回傳的變數
-    a = _a;
-    b = _b;
-    c = _c;
-    return a; //Method 2 ，在function body內加入return 回傳符號，回傳指定變數
-}
-function B() public{
-    A(2,5,8); //Method 1，按照順序輸入參數
-    A({b:5,a:2,c:8}); // Method 2 ，不用按照順序
-}
-```
-
-* function 創建和呼叫 contract 
-```javascript
-contract Example{
-    mapping (address => uint) public balances;
-    function update(uint _value) public {
-        balances[msg.sender] = _value;
-    }       
-}
-contract Sample{
-    function show() public{
-        Example e = new Example(); //宣告新的Contract
-        e.update(100);
-        return e.balances(this); //balances為getter function，所以改用()而不是[]
-    }
-}
-
-```
-
-
-
-提供三種迴圈判斷
-`if`、`while`、`for`
 
 
 ## 時間單位變數
@@ -337,6 +289,7 @@ function (uint256 _num) public{
     * 目前的contract address
 
 ## address相關變數
+Solidity經過編譯，contract裡面的function都會經過sha3處理，再取出前4個Byte來當作這個function的Identifier，有了Identifier function hash 可以直接在contract來呼叫該function；那為什麼在web3使用contract address和ABI的時候，可以直接呼叫contract function name呢? 原因是因為ABI，保有編譯前的function name，所以可以在geth 或是 web3呼叫使用
 * `address.balance`
     * `return (uint)`
     * 回傳address所持有的餘額
@@ -347,9 +300,97 @@ function (uint256 _num) public{
     * `return (bool)`
     * 功能和`transfer`一樣，差別在`return`和gas消耗
     * 發送錯誤會回傳`false`，gas會繼續消耗
+    * 所以以前使用 `send` Method，都會搭配`if(!address.send(100)) { throw; }`，來確保出錯時gas額外消耗的問題
+
+
+**以下三種語法都是 low-level function，會影響solidity type safety**
 * `address.call()`
+    * `return (bool)`
+    * 為low-level function，以使用當前的contract身分傳送data給被呼叫的contract
+    * 參數 沒有限制type，會被轉化成 32 bytes 傳給target address
+    * 呼叫Target contract address 內部的函數，只會回傳`.call()`的結果 `bool`，表示有沒有執行成功，並不會回傳該函數的結果
+    * 在`.call()`的第一個參數，如果剛好是4個bytes 會被認定為 MethodId (function Identify)
+    * `.call()`後面可以在加上`.value()`和`.gas()`，來指定要傳入的 ether 和 gaslimit
+
+```javascript
+pragma solidity^0.4.25;
+contract A{
+    uint256 public result;
+
+    function display(uint256 _insert) public{
+        result = _insert;
+    }
+
+    function fund() external payable{
+
+    }
+
+    function balances() public  view returns(uint256){
+        return address(this).balance;
+    }
+}
+contract B {
+    function callfunc(address _contractA) public returns(bool){
+        bytes4 methodId = bytes4(keccak256("display(uint256)"));
+        return _contractA.call(methodId,2018);
+    }
+}
+
+contract C{
+    function callfunc(address _contractC) public payable returns(bool){
+        bytes4 methodId = bytes4(keccak256("fund()"));
+        return _contractC.call.value(1 ether).gas(500000)(methodId); //如果傳入的value，多於指定的1 ether，contract C 會保存多餘的value
+    }
+}
+```
+
+
 * `address.callcode()`
+    * `return (bool)`
+    * 不能使用`msg.sender`、`msg.value`
+    * 快被淘汰了qq
+
+
 * `address.delegatecall()`
+    * `return (bool)`
+    * 和`.call()`很相似，差別在於`delegatecall()`是以當前的contract身分傳送data給被呼叫的contract，而且是使用當前contract的stroage和balance...；`.call()`則是以被呼叫的contract身分來使用裡面的function，會影響被呼叫的contract address 的storage、balance...
+    * 更直白的說法，我用`.delegatecall()`使用你的contract code，會影響我的storage；我用`.call()`使用你的contract code，會影響你的storage
+    * 可以使用其他contract的`library` code
+    * 不能使用`.value()`，可以使用`.gas()`
+    * 彌補`callcode`不能使用`msg.sender`和`msg.value`的問題
+    
+https://ethereum.stackexchange.com/questions/8168/understanding-namereg-callregister-myname-style-call-between-contracts
+
+```javascript
+pragma solidity ^0.4.25;
+
+contract SomeContract {
+    event callMeMaybeEvent(address _from);
+    function callMeMaybe() payable public {
+        callMeMaybeEvent(this);
+    }
+}
+
+contract ThatCallsSomeContract {
+    function callTheOtherContract(address _contractAddress) public {
+        require(_contractAddress.call(bytes4(keccak256("callMeMaybe()")))); // contractAddress address
+        require(_contractAddress.delegatecall(bytes4(keccak256("callMeMaybe()")))); // ThatCallsSomeContract address
+        SomeLib.calledSomeLibFun(); // ThatCallsSomeContract address
+    }
+}
+
+library SomeLib {
+    event calledSomeLib(address _from);
+    function calledSomeLibFun() public {
+        calledSomeLib(this);
+    }
+}
+```
+
+
+
+
+
 
 ## 數學運算和加密變數
 * `addmod(uint x, uint y, uint z)`
@@ -367,6 +408,10 @@ function (uint256 _num) public{
     * `return (bytes32)`
 * `ripemd160(...)`
     `return (bytes20)`
+
+https://ethereum.stackexchange.com/questions/2632/how-does-soliditys-sha3-keccak256-hash-uints?rq=1
+https://ethereum.stackexchange.com/questions/30369/difference-between-keccak256-and-sha3
+
 
 ## Inheritance
 Solidity  透過複製程式碼和polymorphism，支援多重繼承
@@ -449,3 +494,126 @@ contract A{
     using SafeMath for uint256;
 }
 ```
+
+
+## 特殊情況
+* function 名稱相同，只要參數數量不同，即可區分
+```javascript
+function a(address  _addr) public returns(_addr){
+    return _addr;
+}
+function b(address _addr, string _name) public returns(_addr,_name){
+    return (_addr,_name);
+}
+```
+
+* funtion 呼叫和回傳
+```javascript 
+function A(uint _a, uint _b, uint _c) public returns(uint a, uint b, uint c){ //Method 1 ， 在returns這邊直接宣告回傳的變數
+    a = _a;
+    b = _b;
+    c = _c;
+    return a; //Method 2 ，在function body內加入return 回傳符號，回傳指定變數
+}
+function B() public{
+    A(2,5,8); //Method 1，按照順序輸入參數
+    A({b:5,a:2,c:8}); // Method 2 ，不用按照順序
+}
+```
+
+* function 創建和呼叫 contract 
+```javascript
+contract Example{
+    mapping (address => uint) public balances;
+    function update(uint _value) public {
+        balances[msg.sender] = _value;
+    }       
+}
+contract Sample{
+    function show() public{
+        Example e = new Example(); //宣告新的Contract
+        e.update(100);
+        return e.balances(this); //balances為getter function，所以改用()而不是[]
+    }
+}
+
+```
+
+
+
+提供三種迴圈判斷
+`if`、`while`、`for`
+
+
+
+## 安全問題
+1. Withdraw 問題
+這類情況發生在於，Auction Contract拍賣合約，把退錢的function和投標的function寫在一起時，容易產生的安全問題
+問題在於`.transfer()`會直接呼叫對應address的 fallback function，如果Cracker以contract address 投標，並且在contract fallback function動手腳，像是加入`revert()`，那後續投標價格高的人會一直trigger `revert()`，導致Cracker成為投標最高的人
+所以最安全的解法是投標和退錢function分開處理，拆開來寫的意思，投標不受影響，Cracker就算用同樣的方式，會是他的損失，因為沒辦法拿回錢
+
+* Risky 
+```javascript
+pragma solidity^0.4.25;
+
+contract Auction{
+    address HighestBidder;
+    uint256 HighestBid;
+
+    function bid() public payable{
+        
+        require(msg.value > HighestBid);
+        
+        //退錢給上一個出價最高的買家
+        HighestBidder.transfer(HighestBid);
+        
+        //更新狀態
+        HighestBid = msg.value;
+        HighestBidder = msg.sender;
+
+    }
+}
+
+contract Cracker{
+    function () public payable{
+        revert();
+    }
+    function hack(address _contract) public payable returns(bool){
+        bytes4 methodId = bytes4(keccak256("bid()")); 
+        
+        require(_contract.call.value(1 ether)(methodId)); //如果回傳false就throw
+    }
+}
+```
+* Safety
+```javascript
+pragma solidity^0.4.25;
+
+contract Auction{
+    address HighestBidder;
+    uint256 HighestBid;
+    mapping(address => uint256[]) public bidRecord;
+    
+    event Withdraw(address indexed _bidder, uint256 _value);
+
+    function bid() public payable{
+        
+        require(msg.value > HighestBid);     
+
+        //更新狀態
+        HighestBid = msg.value;
+        HighestBidder = msg.sender;
+
+        //保存紀錄
+        bidRecord[HighestBidder].push(HighestBid);
+
+    }
+    function withdraw(uint256 _valueIndex) public {
+        uint256 value = bidRecord[msg.sender][_valueIndex];
+        msg.sender.transfer(value);
+        emit Withdraw(msg.sender,value);
+    }
+}
+
+```
+

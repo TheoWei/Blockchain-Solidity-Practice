@@ -1,4 +1,6 @@
 # Oraclize 
+https://docs.oraclize.it/#home
+
 ## Introduction
 在Blockchain的場景中，smart contract的data沒有辦法直接從外部進入或取得，一般能想到從外部把data以Transaction的方式送進smart contract，就是透過在web3.js來與Blockchain溝通，不過這還是中心化的作法，因為Back-end是放在中心的server；如果是在分散式的場景下，該如何放進去呢? `Oraclize`就是解決這個問題的服務，所以也把自己定義為  提供data給Blockchain 的第三方
 
@@ -35,15 +37,25 @@ Oraclize 提供5種data source (URL、WolframAlpha、IPFS、random、computation
 * 假如只有一個argument參數，那會以`HTTP GET`來取得資料
 ```javascript
 function oraclize_query(string datasource, string arg) oraclizeAPI internal returns (bytes32 id) 
+
+//example HTTP GET
+oraclize_query("URL","https://www.google.com/api/map/...")
 ```
+
 
 * 假如有兩個argument參數，會以`HTTP POST`來取得資料
 ```javascript
 function oraclize_query(string datasource, string arg1, string arg2) oraclizeAPI internal returns (bytes32 id)
 
+//example HTTP POST
+oraclize_query("URL","https://www.google.com/api/map/...","{ 
+    "name": "jack",
+    "age": 18
+}")
 ```
+
 * `Parsing Helper`
-* 可以將data parsing 過後再送回smart contract
+* 假如data需要經過解析，可以透過Parsing Helper，將data parsing 過後再送回smart contract
 有四種Parsing Type:
 1. JSON
 2. XML
@@ -75,3 +87,7 @@ oraclize_query("IPFS","HASH VALUE...")
 
 
 ## Authenticity Proof
+Oraclize 被設計成不被信任的中間媒介，但不是所有的proof都相容於每個data source type
+
+* 在使用authenticity proof 時，url建議使用`https://`，比較可以避免被竄改的風險
+* 
