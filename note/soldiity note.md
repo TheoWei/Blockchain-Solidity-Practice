@@ -547,10 +547,10 @@ contract Sample{
 
 
 ## 安全問題
-1. Withdraw 問題
-這類情況發生在於，Auction Contract拍賣合約，把退錢的function和投標的function寫在一起時，容易產生的安全問題
-問題在於`.transfer()`會直接呼叫對應address的 fallback function，如果Cracker以contract address 投標，並且在contract fallback function動手腳，像是加入`revert()`，那後續投標價格高的人會一直trigger `revert()`，導致Cracker成為投標最高的人
-所以最安全的解法是投標和退錢function分開處理，拆開來寫的意思，投標不受影響，Cracker就算用同樣的方式，會是他的損失，因為沒辦法拿回錢
+### 1. Withdraw 問題
+這類情況發生在於，Auction Contract拍賣合約，把退錢的function和投標的function寫在一起時，容易產生的安全問題。問題在於`.transfer()`會直接呼叫對應address的 fallback function，如果Cracker以contract address 投標，並且在contract fallback function動手腳，像是加入`revert()`，那後續投標價格高的人會一直trigger `revert()`，導致Cracker成為投標最高的人；所以最安全的解法是投標和退錢function分開處理，拆開來寫的意思，投標不受影響，Cracker就算用同樣的方式，會是他的損失，因為沒辦法拿回錢。
+
+主要提出要點：`.call()`、fallback function、`.transfer()`、function以安全方式拆開來寫
 
 * Risky 
 ```javascript
@@ -617,3 +617,266 @@ contract Auction{
 
 ```
 
+
+### 2. Access Restriction
+主要訴求某些function只能有特定的address可以呼叫，最好加上`modifier check() { require(); }`，先check呼叫function的address有沒有符合規則or身分，書中舉例在2017年7月Parity Wallet就是沒有加上access restriction機制，導致smart contract被惡意轉出ether，還有一點需要注意的是function view type`public`不要隨意使用，針對比較隱密的function或是參數，最好還是設定成`pricate`和`internal`，會相對安全
+
+主要提出要點：`modifier()`、合理使用`public`、合理使用`private`、合理使用`internal`，給予function權限機制，並限制可視範圍
+
+```javascript
+pragma solidity^0.4.25;
+contract Owner{
+    address internal owner;
+    modifier onlyOwner(){
+        require(msg.sender == owner);
+        _;
+    }
+}
+
+contract Use is Owner{
+    constructor() public payable{
+        owner = msg.sender;
+    }
+
+    function withdraw(uint256 _value) public onlyOwner{
+        owner.transfer(_value);
+    }
+}
+```
+
+### 3. Mortal 
+主要訴求，如果contract有安全漏洞，但是contract卻存有ether的情況時如何處理
+
+主要提出要點：合理使用`selfdestruct(address)`，給自己後路
+
+```javascript
+pragma solidity^0.4.25;
+contract Hack{
+    uint256 public balances;
+    address owner;
+    modifier onlyOwner(){
+        require(owner == msg.sender);
+        _;
+    }
+    constructor() public {
+        owner = msg.sender;
+    }
+
+    function kill() public onlyOwner{
+        selfdestruct(msg.sender);
+    }
+    function () public payable{
+        balances+= msg.value;
+    }
+}
+```
+
+### 4. Circuit Breaker 
+主要訴求，contract可以有階段性的機制來控制function呼叫順序，並確保function不會被惡意啟動
+
+主要提出要點：`enum`搭配`modifier`的使用
+```javascript
+pragma solidity^0.4.25;
+contract StepByStep{
+    enum State{
+        Beginning,
+        Pending,
+        Ending
+    }
+    State public state;
+    modifier Stage(State states){
+        require(state == states);
+        _;
+    }
+    constructor() public{
+        state = State.Beginning;
+    }
+
+    function step1() public  Stage(State.Beginning) returns(bool){
+        state = State.Pending;
+        return true;
+    }
+
+    function step2() public  Stage(State.Pending) returns(bool){
+        state = State.Ending;
+        return true;
+    }
+
+    function step3() public view Stage(State.Ending) returns(bool){
+        return true;
+    }
+}
+```
+
+### 5. Reentrancy
+主要訴求在withdraw function內部如果沒有將state狀態提前改變，可能會發生的安全問題
+
+* Risky
+```javascript
+pragma solidity^0.4.25;
+contract Bank{
+    mapping(address => uint256) public balances;
+    event ContractBalances(uint256);
+    event Withdraw(address _taker, uint256 _value);
+
+    function deposit() public payable{
+        balances[msg.sender] = msg.value;
+    }
+
+    function withdraw(address _taker) public {
+        require(balances[_taker] > 0);
+        emit ContractBalances(address(this.balance));
+
+        _taker.transfer(balances[_taker]);
+
+        emit Withdraw(_taker,balances[_taker]);
+
+        balances[_taker] = 0;
+        
+    }
+}
+contract Cracker{
+    address targetAttack;
+    event HackStatus(bool _status);
+    constructor(address _target) public payable{
+        targetAttack = _target;
+    }
+
+    function () payable{
+        if(!targetAttack.call.value(address(this).balance)(bytes4(keccak256("withdraw()")))){
+            emit HackStatus(false);
+        }else{
+            emit HackStatus(true);
+        }
+    }
+
+    function triggerDeposit() public{
+        targetAttack.call.value(address(this).balance)(bytes4(keccak256("deposit()")));
+    }
+
+    function triggeWithdraw() public{
+        targetAttack.call.value(address(this).balance)(bytes4(keccak256("withdraw()")));
+    }
+}
+```
+
+* Safety
+```javascript
+pragma solidity^0.4.25;
+contract Bank{
+
+}
+contract Cracker{
+    
+}
+```
+
+
+
+### 6. Transaction Ordering Dependence
+主要訴求在Blockchain的世界，Miner會優先處理手續費最高的Tx，Cracker可以透過高昂的手續費來擾亂smart contract裡面的function rule。
+以Ethereum為開發環境來解說，Tx 的發布都會需要設定gaspPrice，而這個gasPrice就是Ethereum Miner處理交易順序的依據，這邊會講到兩種情況；如果同一個account addresss 所發布的Tx，Miner會依據Tx nonce來判斷交易的順序，因為Ethereum account structure裡面，有一個component 叫 nonce，會記錄這個account address發布過多少次Tx，所以基本上不會有問題；另一個情況是，當不同account address發布交易，Miner就會以gasPrice的多寡來衡量處理順序，也就容易有破壞合約規則的問題產生
+
+* 比較好的解決方式，就是將contract function rule變得更嚴謹，比如給予function判斷 address 身分的機制 或是 給予function 階段性限制
+* 書中提到以Creacker的觀點，如何透過自動化的方式，偵測Tx gasPrice，並同時發布較高gasPrice的call contract function Tx，來擾亂contract rule
+```javascript
+/*
+透過 web3.js 的 watch 來監控Tx event，自動取得Tx gasPrice並做後續處理
+假設 買賣性質的 smart contract裡面有兩個function，一個是buy，另一個是updatePrice
+*/
+
+var filter = web3.eth.filter('pending');
+filter.watch((err,result)=>{
+    var tx = web3.eth.getTransaction(result);
+    if(!error && tx.to.toUpperCase() === mpt.address.toUpperCase() && tx.from !== eth.accounts[0]){
+        console.log(`Tx Hash:: ${result}`);
+        var _gasPrice = parseInt(tx.gasPrice,10)+1;
+        console.log(`Gas Price:: ${_gasPrice}`);
+        var attackTx = mpt.updatePrice.sendTransaction(3, {from: eth.account[0], gas: 5*10**6, gasPrice: _gasPrice});
+        console.log(`attackTx Hash:: ${attackTx}`);
+        console.log(`done!`);
+    }
+})
+        
+
+```
+
+### 7. Timestamp Dependence
+主要訴求`block.timestamp`、`block.number`、`blockhash`、`now`設為隨機數的參考依據，很容易被Miner惡意操作 (雖然我覺得要在MainChain操作不是很容易...，因為要考慮到Difficulty，除非算力很大，不然也不一定會猜中，不過確實拿一個大家都知道的參數做依據，風險會相對較高)
+
+* 文中有提到一個不錯的點，`block.timestamp`是指 Tx 被確認的時間點，也就是Tx 所在的Block被Mine進Blockchain的時間點
+
+### Contract State
+主要訴求，在deploy contract 或是 call contract 裡面的function時，所指定的function 和 輸入的參數，都會包含在每一筆送出去的Transaction，所以最好不要將個資或是重要機密的資料放在smart contract裡，要不然就先加密過。
+就算將某一些 參數的 view type設定為`private`or`interval`，雖然在 call contract function 的時候是抓不到、也看不到回傳的值，不過只要 function內有用到這些type的參數，在Transaction Input還是可以解析出這些隱藏的參數值
+
+* 範例smart contract
+```javascript
+pragma solidity^0.4.25;
+contract Test{
+    address owner;
+    string private key;
+
+    constructor(string _key) public{
+        owner = msg.sender;
+        key = _key;
+    }
+
+    function setKey(string _key) public {
+        key = _key;
+    }
+}
+```
+
+* 範例Contract 的 Transaction Input，`constructor`輸入的參數是`"JOY"`
+```javascript
+0x608060405234801561001057600080fd5b506040516102de3803806102de83398101806040528101908080518201929190505050336000806101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff1602179055508060019080519060200190610089929190610090565b5050610135565b828054600181600116156101000203166002900490600052602060002090601f016020900481019282601f106100d157805160ff19168380011785556100ff565b828001600101855582156100ff579182015b828111156100fe5782518255916020019190600101906100e3565b5b50905061010c9190610110565b5090565b61013291905b8082111561012e576000816000905550600101610116565b5090565b90565b61019a806101446000396000f300608060405260043610610041576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff168063af42d10614610046575b600080fd5b34801561005257600080fd5b506100ad600480360381019080803590602001908201803590602001908080601f01602080910402602001604051908101604052809392919081815260200183838082843782019150505050505091929192905050506100af565b005b80600190805190602001906100c59291906100c9565b5050565b828054600181600116156101000203166002900490600052602060002090601f016020900481019282601f1061010a57805160ff1916838001178555610138565b82800160010185558215610138579182015b8281111561013757825182559160200191906001019061011c565b5b5090506101459190610149565b5090565b61016b91905b8082111561016757600081600090555060010161014f565b5090565b905600a165627a7a723058204d139a8a549a4ab6db1afead639445d6ebe2bd12490a0dbd51cf9ba94380914c0029000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000034a4f590000000000000000000000000000000000000000000000000000000000
+
+web3.toAscii("0x4a4f59"); //回傳結果是 "JOY"
+
+```
+
+
+
+舉例來說，當deploy contract之前，得先取得contract compile後的 bytecode 和 ABI，這邊的bytecode裡面就包含著該contract所有function的 Method ID，也就是將 `functionName(variableType)`經過`keccak256`之後，取前4個byte，Ethereum 會辨識這個 Method ID 來得知是呼叫哪一個 function。
+
+* 範例Contract 的 bytecode
+```javascript
+{
+    "linkReferences": {},
+    
+    "object"://這邊就是contract function 全部的 Method ID
+    "608060405234801561001057600080fd5b506040516102de3803806102de83398101806040528101908080518201929190505050336000806101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff1602179055508060019080519060200190610089929190610090565b5050610135565b828054600181600116156101000203166002900490600052602060002090601f016020900481019282601f106100d157805160ff19168380011785556100ff565b828001600101855582156100ff579182015b828111156100fe5782518255916020019190600101906100e3565b5b50905061010c9190610110565b5090565b61013291905b8082111561012e576000816000905550600101610116565b5090565b90565b61019a806101446000396000f300608060405260043610610041576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff168063af42d10614610046575b600080fd5b34801561005257600080fd5b506100ad600480360381019080803590602001908201803590602001908080601f01602080910402602001604051908101604052809392919081815260200183838082843782019150505050505091929192905050506100af565b005b80600190805190602001906100c59291906100c9565b5050565b828054600181600116156101000203166002900490600052602060002090601f016020900481019282601f1061010a57805160ff1916838001178555610138565b82800160010185558215610138579182015b8281111561013757825182559160200191906001019061011c565b5b5090506101459190610149565b5090565b61016b91905b8082111561016757600081600090555060010161014f565b5090565b905600a165627a7a723058204d139a8a549a4ab6db1afead639445d6ebe2bd12490a0dbd51cf9ba94380914c0029",
+
+    "opcodes": "PUSH1 0x80 PUSH1 0x40 MSTORE CALLVALUE DUP1 ISZERO PUSH2 0x10 JUMPI PUSH1 0x0 DUP1 REVERT JUMPDEST POP PUSH1 0x40 MLOAD PUSH2 0x2DE CODESIZE SUB DUP1 PUSH2 0x2DE DUP4 CODECOPY DUP2 ADD DUP1 PUSH1 0x40 MSTORE DUP2 ADD SWAP1 DUP1 DUP1 MLOAD DUP3 ADD SWAP3 SWAP2 SWAP1 POP POP POP CALLER PUSH1 0x0 DUP1 PUSH2 0x100 EXP DUP2 SLOAD DUP2 PUSH20 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF MUL NOT AND SWAP1 DUP4 PUSH20 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF AND MUL OR SWAP1 SSTORE POP DUP1 PUSH1 0x1 SWAP1 DUP1 MLOAD SWAP1 PUSH1 0x20 ADD SWAP1 PUSH2 0x89 SWAP3 SWAP2 SWAP1 PUSH2 0x90 JUMP JUMPDEST POP POP PUSH2 0x135 JUMP JUMPDEST DUP3 DUP1 SLOAD PUSH1 0x1 DUP2 PUSH1 0x1 AND ISZERO PUSH2 0x100 MUL SUB AND PUSH1 0x2 SWAP1 DIV SWAP1 PUSH1 0x0 MSTORE PUSH1 0x20 PUSH1 0x0 KECCAK256 SWAP1 PUSH1 0x1F ADD PUSH1 0x20 SWAP1 DIV DUP2 ADD SWAP3 DUP3 PUSH1 0x1F LT PUSH2 0xD1 JUMPI DUP1 MLOAD PUSH1 0xFF NOT AND DUP4 DUP1 ADD OR DUP6 SSTORE PUSH2 0xFF JUMP JUMPDEST DUP3 DUP1 ADD PUSH1 0x1 ADD DUP6 SSTORE DUP3 ISZERO PUSH2 0xFF JUMPI SWAP2 DUP3 ADD JUMPDEST DUP3 DUP2 GT ISZERO PUSH2 0xFE JUMPI DUP3 MLOAD DUP3 SSTORE SWAP2 PUSH1 0x20 ADD SWAP2 SWAP1 PUSH1 0x1 ADD SWAP1 PUSH2 0xE3 JUMP JUMPDEST JUMPDEST POP SWAP1 POP PUSH2 0x10C SWAP2 SWAP1 PUSH2 0x110 JUMP JUMPDEST POP SWAP1 JUMP JUMPDEST PUSH2 0x132 SWAP2 SWAP1 JUMPDEST DUP1 DUP3 GT ISZERO PUSH2 0x12E JUMPI PUSH1 0x0 DUP2 PUSH1 0x0 SWAP1 SSTORE POP PUSH1 0x1 ADD PUSH2 0x116 JUMP JUMPDEST POP SWAP1 JUMP JUMPDEST SWAP1 JUMP JUMPDEST PUSH2 0x19A DUP1 PUSH2 0x144 PUSH1 0x0 CODECOPY PUSH1 0x0 RETURN STOP PUSH1 0x80 PUSH1 0x40 MSTORE PUSH1 0x4 CALLDATASIZE LT PUSH2 0x41 JUMPI PUSH1 0x0 CALLDATALOAD PUSH29 0x100000000000000000000000000000000000000000000000000000000 SWAP1 DIV PUSH4 0xFFFFFFFF AND DUP1 PUSH4 0xAF42D106 EQ PUSH2 0x46 JUMPI JUMPDEST PUSH1 0x0 DUP1 REVERT JUMPDEST CALLVALUE DUP1 ISZERO PUSH2 0x52 JUMPI PUSH1 0x0 DUP1 REVERT JUMPDEST POP PUSH2 0xAD PUSH1 0x4 DUP1 CALLDATASIZE SUB DUP2 ADD SWAP1 DUP1 DUP1 CALLDATALOAD SWAP1 PUSH1 0x20 ADD SWAP1 DUP3 ADD DUP1 CALLDATALOAD SWAP1 PUSH1 0x20 ADD SWAP1 DUP1 DUP1 PUSH1 0x1F ADD PUSH1 0x20 DUP1 SWAP2 DIV MUL PUSH1 0x20 ADD PUSH1 0x40 MLOAD SWAP1 DUP2 ADD PUSH1 0x40 MSTORE DUP1 SWAP4 SWAP3 SWAP2 SWAP1 DUP2 DUP2 MSTORE PUSH1 0x20 ADD DUP4 DUP4 DUP1 DUP3 DUP5 CALLDATACOPY DUP3 ADD SWAP2 POP POP POP POP POP POP SWAP2 SWAP3 SWAP2 SWAP3 SWAP1 POP POP POP PUSH2 0xAF JUMP JUMPDEST STOP JUMPDEST DUP1 PUSH1 0x1 SWAP1 DUP1 MLOAD SWAP1 PUSH1 0x20 ADD SWAP1 PUSH2 0xC5 SWAP3 SWAP2 SWAP1 PUSH2 0xC9 JUMP JUMPDEST POP POP JUMP JUMPDEST DUP3 DUP1 SLOAD PUSH1 0x1 DUP2 PUSH1 0x1 AND ISZERO PUSH2 0x100 MUL SUB AND PUSH1 0x2 SWAP1 DIV SWAP1 PUSH1 0x0 MSTORE PUSH1 0x20 PUSH1 0x0 KECCAK256 SWAP1 PUSH1 0x1F ADD PUSH1 0x20 SWAP1 DIV DUP2 ADD SWAP3 DUP3 PUSH1 0x1F LT PUSH2 0x10A JUMPI DUP1 MLOAD PUSH1 0xFF NOT AND DUP4 DUP1 ADD OR DUP6 SSTORE PUSH2 0x138 JUMP JUMPDEST DUP3 DUP1 ADD PUSH1 0x1 ADD DUP6 SSTORE DUP3 ISZERO PUSH2 0x138 JUMPI SWAP2 DUP3 ADD JUMPDEST DUP3 DUP2 GT ISZERO PUSH2 0x137 JUMPI DUP3 MLOAD DUP3 SSTORE SWAP2 PUSH1 0x20 ADD SWAP2 SWAP1 PUSH1 0x1 ADD SWAP1 PUSH2 0x11C JUMP JUMPDEST JUMPDEST POP SWAP1 POP PUSH2 0x145 SWAP2 SWAP1 PUSH2 0x149 JUMP JUMPDEST POP SWAP1 JUMP JUMPDEST PUSH2 0x16B SWAP2 SWAP1 JUMPDEST DUP1 DUP3 GT ISZERO PUSH2 0x167 JUMPI PUSH1 0x0 DUP2 PUSH1 0x0 SWAP1 SSTORE POP PUSH1 0x1 ADD PUSH2 0x14F JUMP JUMPDEST POP SWAP1 JUMP JUMPDEST SWAP1 JUMP STOP LOG1 PUSH6 0x627A7A723058 KECCAK256 0x4d SGT SWAP11 DUP11 SLOAD SWAP11 0x4a 0xb6 0xdb BYTE INVALID 0xad PUSH4 0x9445D6EB 0xe2 0xbd SLT 0x49 EXP 0xd 0xbd MLOAD 0xcf SWAP12 0xa9 NUMBER DUP1 SWAP2 0x4c STOP 0x29 ",
+    
+	"sourceMap": "25:232:0:-;;;92:89;8:9:-1;5:2;;;30:1;27;20:12;5:2;92:89:0;;;;;;;;;;;;;;;;;;;;;;;;;;;;;142:10;134:5;;:18;;;;;;;;;;;;;;;;;;169:4;163:3;:10;;;;;;;;;;;;:::i;:::-;;92:89;25:232;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;:::i;:::-;;;:::o;:::-;;;;;;;;;;;;;;;;;;;;;;;;;;;:::o;:::-;;;;;;;"
+}
+```
+
+那當指定contract 某一個 function，並輸入參數，最後送出這筆Transaction後，會先回傳Transaction Hash，透過Transaction Hash 裡面的 Input，可以透過解析來找出，呼叫的function Name 和輸入的參數
+
+* 假設呼叫 `setKey()` 參數為"APPLE"
+```javascript
+//這是Transaction Input
+0xaf42d106000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000054150504c45000000000000000000000000000000000000000000000000000000
+
+//可以把它拆分成5個部分
+0x 
+af42d106 //Method Id
+0000000000000000000000000000000000000000000000000000000000000020 //參數開頭的offset補位，10進位表示會是32，也就是32byte
+0000000000000000000000000000000000000000000000000000000000000005 //參數的容量 為 5byte
+4150504c45000000000000000000000000000000000000000000000000000000 //參數值
+
+
+透過`web3.toAscii()`可以將參數值轉化為字串
+web3.toAscii('0x4150504c45'); //回傳結果是 "APPLE"
+```
+
+* 也可以透過`eth.getStorageAt(contract address, 0, blockNumber)`來找到參數值
+
+```javascript
+eth.getStorageAt()
+```
+
+### Overflow
